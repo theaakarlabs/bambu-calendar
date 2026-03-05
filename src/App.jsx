@@ -402,43 +402,209 @@ async function saveDetail(id, detail) {
   try { localStorage.setItem(DK(id), JSON.stringify(detail)); } catch {}
 }
 
-// ─── AI BRIEF GENERATOR ───────────────────────────────────────────────────────
-async function generateBrief(idea) {
-  const prompt = `You are a professional FDM 3D printing content creator with two Bambu Lab P1S Combo printers with AMS (Automatic Material System). You produce voiceover-only content — no face cam. You are writing a detailed production brief for Day ${idea.id} of your 365-day content calendar.
+// ─── LOCAL BRIEF ENGINE ───────────────────────────────────────────────────────
+function generateBrief(idea) {
+  const t = idea.t;
+  const title = idea.title;
+  const fil = idea.fil;
+  const filaments = fil.split(/[,—–]/).map(s => s.trim()).filter(Boolean);
 
-The idea for this day:
-Title: "${idea.title}"
-Content type: ${idea.t} (${TYPE_META[idea.t]?.label})
-Filaments: ${idea.fil}
-Month theme: ${MONTH_THEMES[idea.m]}
+  // ── Shoot times by type ──
+  const shootTimes = { AMS:"2–3 hrs incl. print setup", Functional:"3–4 hrs incl. functional test", Scale:"2–3 hrs incl. lighting setup", Build:"2–4 hrs incl. test specimens", Fun:"1–2 hrs, mechanism prints fast" };
+  const printTimes = { AMS:"4–8 hrs (AMS multi-colour)", Functional:"3–6 hrs depending on geometry", Scale:"5–10 hrs at detail settings", Build:"1–4 hrs per specimen set", Fun:"2–5 hrs print-in-place" };
 
-Respond ONLY with a valid JSON object — no markdown, no backticks, no preamble. Use this exact structure:
-{
-  "shootFormat": "1-2 sentences describing the overall filming format and camera approach",
-  "shotList": ["Shot 1 description", "Shot 2 description", "Shot 3 description", "Shot 4 description", "Shot 5 description"],
-  "lightingSetup": "Specific lighting description — equipment, angle, colour temperature",
-  "voiceoverStyle": "Tone and pacing guidance for the narration (e.g. calm and clinical / deadpan / enthusiastic but precise)",
-  "script": "Full voiceover script, 150-250 words. Write it exactly as it should be spoken — natural, confident, informative. Include natural pauses marked with [pause]. No intro or outro music cues needed.",
-  "coloursRequired": ["Colour 1 — specific filament description", "Colour 2 — specific filament description"],
-  "equipmentRequired": ["Item 1", "Item 2", "Item 3", "Item 4"],
-  "proTips": ["Specific tip 1 for this exact content", "Specific tip 2", "Specific tip 3"],
-  "estimatedShootTime": "e.g. 2 hours including print setup",
-  "estimatedPrintTime": "e.g. 4-6 hours"
-}`;
+  // ── Lighting by type ──
+  const lighting = {
+    AMS:    "Two softboxes at 45° either side, one snoot from above for specular highlight on silk surfaces. Colour temp 5500K daylight. Black card reflector behind for maximum contrast. Macro lens for AMS switching shots.",
+    Scale:  "Single key light at 30° from front-left, large white reflector card on right to fill shadows. 5500K. Shoot on matte black surface. Use a snoot for hero shots to isolate model from background.",
+    Functional:"Evenly lit from two sides — no harsh shadows on functional geometry. 5500K fluorescent or LED panel. Add a second macro shot under a ring light to show surface quality and layer lines.",
+    Build:  "Flat overhead lighting for specimen comparison shots. 5500K. Side light at 15° for surface quality reveals. Camera locked on tripod — specimens must not move between shots for comparison to be credible.",
+    Fun:    "Backlit on frosted perspex or light box for mechanisms — the transparency reveals internal geometry. 5500K from above. Use macro for gear teeth and hinge geometry. Film movement shots in a single slow continuous take.",
+  };
 
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 1000,
-      messages: [{ role: "user", content: prompt }]
-    })
-  });
-  const data = await response.json();
-  const raw = data.content?.find(b => b.type === "text")?.text || "";
-  const clean = raw.replace(/```json|```/g, "").trim();
-  return JSON.parse(clean);
+  // ── Voiceover style by type ──
+  const voStyles = {
+    AMS:       "Calm, considered, almost architectural. Let the colour do the talking — your voice is the framing, not the spectacle. Speak slowly on colour reveal moments. Pause after each key fact.",
+    Scale:     "Documentary tone — quiet authority, like a museum guide who knows more than they're letting on. Unhurried. Let pauses carry weight at key historical or design moments.",
+    Functional:"Precise and clinical. State the problem, state the number, state the result. No padding. Speak the way an engineer would to a client — confident, factual, zero hyperbole.",
+    Build:     "Direct and methodical. Walk through each variable as if teaching a class. Short sentences. Numbers delivered flatly — let the data carry the drama, not your delivery.",
+    Fun:       "Dry wit, deadpan delivery. The object is doing something extraordinary — your job is to understate it. Occasional dry one-liners work. Never oversell. Let the mechanism speak.",
+  };
+
+  // ── Shot lists by type ──
+  const shotLists = {
+    AMS: [
+      `Wide establishing shot of the finished print on a black surface, lit from one side to show colour graduation`,
+      `Macro shot of the AMS unit mid-run — filament path visible, active spool highlighted`,
+      `Extreme macro on the colour transition zone between two adjacent AMS colours on the print surface`,
+      `Slow 360° orbital video of the finished print at 10cm distance — 30 seconds minimum`,
+      `Split-screen: slicer colour preview on laptop screen alongside the physical printed result`,
+    ],
+    Scale: [
+      `Hero shot — model on matte black surface, single key light, shot at model eye-level`,
+      `Top-down orthographic shot showing plan geometry clearly`,
+      `Macro on the most technically demanding detail — the shot that justifies the print time`,
+      `Contextual scale shot — place a coin, pen, or known object next to the model`,
+      `Progressive reveal: start tight on a detail, pull back slowly to reveal the full model`,
+    ],
+    Functional: [
+      `The problem shot — show the original broken or unavailable part alongside your printed replacement`,
+      `Caliper measurement shot — jaws on the critical dimension, number clearly visible`,
+      `Mid-print shot showing the geometry as it builds — ideally at the most complex layer`,
+      `Functional test in action — load, flex, fit, or operate the printed part on camera`,
+      `Before/after split — the old solution on the left, the printed solution on the right`,
+    ],
+    Build: [
+      `Specimen array — all test pieces laid out in order on a flat surface, labelled`,
+      `The test being performed — load applied, measurement taken, failure occurring`,
+      `Data reveal — hand-drawn or screen-displayed chart showing the results`,
+      `Macro on the most revealing surface detail — the visual proof of the data`,
+      `Camera locked comparison shot — two specimens side by side under identical lighting`,
+    ],
+    Fun: [
+      `The mechanism in action — one clean continuous take, no cuts, natural light or backlight`,
+      `Macro on the most satisfying moving part — gear teeth meshing, hinge flexing, cam rotating`,
+      `The print coming off the build plate — still warm, mechanism already functional`,
+      `Stress test — push it, twist it, drop it — one take, no commentary needed`,
+      `Side-by-side: the mechanism next to a technical drawing or reference image`,
+    ],
+  };
+
+  // ── Equipment by type ──
+  const equipment = {
+    AMS:       ["Camera with macro lens (50mm+ equivalent)", "Black acrylic or matte card shooting surface", "Two LED softboxes or diffused panels", "Small snoot or gridded light for specular highlights", "Colour calibration card for white balance consistency"],
+    Scale:     ["Camera at model eye-level — tripod essential", "Matte black shooting surface", "Single key light + large white reflector card", "Ruler or known object for scale reference", "Blower brush — fingerprints destroy scale model shots"],
+    Functional:["Calipers — Mitutoyo or equivalent, clean jaws", "Camera on tripod for measurement close-ups", "The part being replaced (for comparison)", "Load weights or test fixture if doing structural test", "Marker for labelling specimens"],
+    Build:     ["Digital calipers or micrometer", "All specimens laid out and labelled before filming", "Graph paper or screen for data visualisation", "Fixed camera position — do not move between comparison shots", "Ruler visible in frame for all specimen shots"],
+    Fun:       ["Backlit surface (light box or frosted perspex on LEDs)", "Macro lens for gear and hinge detail", "Steady hands or small tripod for mechanism action shots", "Black card to eliminate background clutter", "Second camera angle if mechanism moves in multiple axes"],
+  };
+
+  // ── Pro tips by type ──
+  const proTips = {
+    AMS: [
+      `Print the vase or hero object twice — one for shooting, one to cut open and photograph the colour transition layers in cross-section`,
+      `Set your AMS purge tower off to the side of the build plate and film it mid-print — the tower itself is visually interesting content`,
+      `Shoot silk filaments last in the session when the camera is still set up — they need exact lighting to show their surface properly`,
+    ],
+    Scale: [
+      `Shoot at model eye-level, not from above — overhead shots make scale models look like toys; eye-level makes them look architectural`,
+      `A single drop of isopropyl alcohol on a cotton bud removes fingerprints from PLA without damaging the surface`,
+      `Film the model before you handle it — once it's been picked up it will have fingerprints that catch the light in post`,
+    ],
+    Functional: [
+      `State exact numbers on camera — "this costs £6,200 from the supplier; this print cost £11" is a sentence that travels far`,
+      `Film the failure or problem first before you reveal the printed solution — the contrast is the content`,
+      `If you're doing a load test, set a specific failure load target before filming — "will it hold 40kg" is more compelling than "I applied some load"`,
+    ],
+    Build: [
+      `Label every specimen before you film — a strip of masking tape with a marker is enough; unlabelled specimens are unusable in post`,
+      `Film the data chart being drawn or filled in in real time — watching numbers appear is more engaging than a pre-made chart`,
+      `Shoot the failure moment in slow motion if possible — the crack, the layer separation, or the warp is the most visually interesting data point`,
+    ],
+    Fun: [
+      `The best mechanism shots are single continuous takes — a cut during motion breaks the magic; practise the move before recording`,
+      `Print a sacrificial copy for the destruction test — you only need one good-looking hero print for photography`,
+      `Understate everything in the voiceover — let the viewer be more impressed than you appear to be; it reads as confidence`,
+    ],
+  };
+
+  // ── Script builder ──
+  const scriptTemplates = {
+    AMS: `This is Day ${idea.id}. [pause] The idea is simple: let the colour do all the design work.
+
+${title.charAt(0).toUpperCase() + title.slice(1)}.
+
+The Bambu P1S with AMS doesn't just swap filaments between prints. It sequences them within a single print — layer by layer, zone by zone. [pause] Which means colour isn't decoration applied afterwards. It's a structural decision made in the slicer before the first layer lands.
+
+The filaments for this one: ${fil}. [pause] Each colour loaded into a specific AMS slot. Each slot assigned to a specific height band, zone, or feature in Bambu Studio.
+
+The print itself takes care of the transitions. The purge tower handles contamination. Your job is to assign the logic — which colour means what, and why.
+
+[pause] That's the question worth spending time on. Not "what colours look good together" — though that matters — but "what does each colour communicate?" 
+
+In architecture, orange means services. Grey means structure. White means envelope. [pause] In engineering drawings, red means tension. Blue means compression. In cartography, blue is water and green is low ground.
+
+Colour already has meaning. [pause] The AMS just lets you use it precisely, physically, permanently.
+
+Film the transition zone under macro. That's where the decision becomes visible.`,
+
+    Scale: `Day ${idea.id}. [pause]
+
+${title.charAt(0).toUpperCase() + title.slice(1)}.
+
+There's a version of this object that exists only in archives — in drawings, in photographs, in descriptions written by people who stood in front of it or climbed into it or watched it move. [pause] The physical original may be gone, modified, inaccessible, or simply too large to see in full.
+
+The print is 1:${title.match(/1:(\d+)/)?.[1] || "100"}. Filaments: ${fil}. [pause] Every dimension pulled from the best available source — specification drawings where they exist, photogrammetry where they don't, measured survey data where it was published.
+
+At this scale, the geometry is honest. Nothing is simplified for visual appeal. The decisions the original designers made — the proportions, the structural logic, the material choices — are preserved in the model because the model is built from their numbers.
+
+[pause] The P1S runs this at standard layer height, 0.2mm. The AMS differentiates materials that would otherwise look identical at scale. That's the only licence taken — colour where colour communicates something the geometry alone cannot.
+
+Film it at eye level. The eye-level shot is the one that makes it real.`,
+
+    Functional: `Day ${idea.id}. [pause] This is a problem that needed solving.
+
+${title.charAt(0).toUpperCase() + title.slice(1)}.
+
+The original part failed. [pause] Or it was unavailable. Or it cost more than the job could absorb. The specific numbers are in the video — but the principle is the same regardless of the numbers.
+
+Material: ${fil}. [pause] Chosen because the application demanded it — not because it was the easiest filament to print, or the cheapest, or the one already loaded in the machine.
+
+The P1S ran the print in the enclosed chamber. Temperatures logged. First layer confirmed. Dimensions checked against the caliper measurements before the machine was left to run. [pause]
+
+The test is what matters. Not whether it looks right — it needs to function correctly under the actual load condition it was designed for. That test is on camera. The numbers are real.
+
+[pause] FDM isn't always the right answer for functional replacement parts. The material properties are different from injection moulding. The anisotropy is real. The tolerances require understanding.
+
+But when the geometry is right and the material is matched to the application — [pause] it works. The numbers say so.`,
+
+    Build: `Day ${idea.id}. [pause]
+
+${title.charAt(0).toUpperCase() + title.slice(1)}.
+
+This is a controlled test. [pause] One variable changed. Everything else held constant. The specimens are identical in geometry, printed on the same machine, at the same time, with the same filament — except for the single parameter under examination.
+
+${fil}. [pause] The material is part of the test. The results belong to this material, this machine, this geometry. They may not transfer directly to your setup. But the methodology does.
+
+The data is on screen. [pause] Not approximated, not eyeballed — measured. Caliper measurements. Load values. Dimensional readings at three points per specimen. The chart you're looking at was drawn from the actual numbers, not from what seemed reasonable.
+
+[pause] One result in this test was unexpected. Not dramatic — the machine didn't fail and nothing broke catastrophically. But one data point sits outside where the theory predicts it should be.
+
+That's the interesting one. [pause] That's the one worth understanding before you next run this material at this setting.
+
+The methodology is in the description. Run it yourself and compare.`,
+
+    Fun: `Day ${idea.id}. [pause]
+
+${title.charAt(0).toUpperCase() + title.slice(1)}.
+
+It came off the build plate already moving. [pause] No assembly. No tools. No fasteners. The clearances were designed in — 0.25mm between mating surfaces, tested across three iterations before this version was locked.
+
+${fil}. [pause] One colour per moving component. Not for aesthetics — for legibility. When something this complex is in motion, you need to be able to follow which part is doing what.
+
+The mechanism is [pause] not new. The geometry has been understood for decades in some cases, centuries in others. What's new is that a consumer FDM printer can now produce it in one job, on one build plate, and hand it to someone who has no idea how it works — and watch their face as it moves.
+
+[pause] That's the actual deliverable. Not the print. The moment of comprehension when someone picks it up and it does what it does and they understand, physically, in their hands, something they could only previously understand on paper.
+
+Print time is in the description. [pause] The mechanism ships moving. You'll figure out why when you hold it.`,
+  };
+
+  const colours = filaments.length > 0
+    ? filaments.map(f => f.replace(/^(PLA|PETG|ABS|ASA|PA12|TPU|Silk PLA|Matte PLA)\s*/i, "").trim()).filter(Boolean).map(f => f)
+    : [fil];
+
+  return {
+    shootFormat: `Single-camera static setup with ${t === "Fun" || t === "AMS" ? "macro lens for detail shots and a wider lens for the hero reveal" : "tripod-locked wide shot for comparisons and a handheld macro for close-up detail"}. Voiceover recorded separately in one clean take after all footage is captured — never record live on set.`,
+    shotList: shotLists[t] || shotLists.Build,
+    lightingSetup: lighting[t] || lighting.Build,
+    voiceoverStyle: voStyles[t] || voStyles.Build,
+    script: scriptTemplates[t] || scriptTemplates.Build,
+    coloursRequired: filaments.length > 1 ? filaments : [fil],
+    equipmentRequired: equipment[t] || equipment.Build,
+    proTips: proTips[t] || proTips.Build,
+    estimatedShootTime: shootTimes[t] || "2–3 hrs",
+    estimatedPrintTime: printTimes[t] || "4–8 hrs",
+  };
 }
 
 // ─── SECTION COMPONENT ────────────────────────────────────────────────────────
@@ -455,45 +621,20 @@ function Section({ icon, label, color, children }) {
 
 // ─── IDEA DETAIL PANEL ────────────────────────────────────────────────────────
 function IdeaDetail({ idea, onClose }) {
-  const [detail, setDetail] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const detail = generateBrief(idea);
   const meta = TYPE_META[idea.t];
   const font = "'Rajdhani','Trebuchet MS',sans-serif";
   const mono = "'Space Mono',monospace";
 
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      const cached = await loadDetail(idea.id);
-      if (cached && !cancelled) { setDetail(cached); return; }
-      setLoading(true);
-      try {
-        const d = await generateBrief(idea);
-        if (!cancelled) { setDetail(d); saveDetail(idea.id, d); }
-      } catch(e) { if (!cancelled) setError("Generation failed. Tap retry."); }
-      finally { if (!cancelled) setLoading(false); }
-    }
-    load();
-    return () => { cancelled = true; };
-  }, [idea.id]);
-
-  const retry = async () => {
-    setError(null); setDetail(null); setLoading(true);
-    try { const d = await generateBrief(idea); setDetail(d); saveDetail(idea.id, d); }
-    catch { setError("Generation failed. Try again."); }
-    finally { setLoading(false); }
-  };
-
   const pill = (txt, col) => (
-    <span style={{ display:"inline-block", padding:"2px 9px", borderRadius:20, fontSize:10, fontWeight:700,
+    <span key={txt} style={{ display:"inline-block", padding:"2px 9px", borderRadius:20, fontSize:10, fontWeight:700,
       background:`${col}18`, border:`1px solid ${col}44`, color:col, marginRight:5, marginBottom:4 }}>
       {txt}
     </span>
   );
 
-  const listItem = (txt, col="#94a3b8") => (
-    <div style={{ display:"flex", gap:8, marginBottom:6 }}>
+  const listItem = (txt, col="#94a3b8", i) => (
+    <div key={i} style={{ display:"flex", gap:8, marginBottom:6 }}>
       <div style={{ color:"#f97316", fontSize:11, flexShrink:0, marginTop:1 }}>▸</div>
       <div style={{ fontSize:12, color:col, lineHeight:1.6 }}>{txt}</div>
     </div>
@@ -502,6 +643,7 @@ function IdeaDetail({ idea, onClose }) {
   return (
     <div style={{ fontFamily:font, background:"#090b10", border:"1px solid #1a2030", borderRadius:8,
       margin:"4px 0 8px", overflow:"hidden" }}>
+
       {/* Header */}
       <div style={{ background:meta.bg, borderBottom:`1px solid ${meta.border}`, padding:"12px 14px",
         display:"flex", alignItems:"flex-start", gap:10 }}>
@@ -522,111 +664,74 @@ function IdeaDetail({ idea, onClose }) {
       </div>
 
       {/* Content */}
-      <div style={{ padding:"14px", maxHeight:520, overflowY:"auto" }}>
-        {loading && (
-          <div style={{ textAlign:"center", padding:"30px 0" }}>
-            <div style={{ fontSize:11, color:"#f97316", fontFamily:mono, marginBottom:8 }}>
-              ✦ Generating production brief…
+      <div style={{ padding:"14px", maxHeight:540, overflowY:"auto" }}>
+
+        {/* Times row */}
+        <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap" }}>
+          {[["🎬 SHOOT TIME", detail.estimatedShootTime, "#60a5fa"],
+            ["🖨️ PRINT TIME", detail.estimatedPrintTime, "#a78bfa"]].map(([l,v,c]) => (
+            <div key={l} style={{ flex:1, minWidth:140, padding:"8px 12px", borderRadius:6,
+              background:`${c}0d`, border:`1px solid ${c}33` }}>
+              <div style={{ fontSize:8, fontFamily:mono, fontWeight:700, color:c, letterSpacing:"0.12em", marginBottom:3 }}>{l}</div>
+              <div style={{ fontSize:12, color:"#d4dbe5", fontWeight:600 }}>{v}</div>
             </div>
-            <div style={{ fontSize:10, color:"#334155" }}>This takes about 10 seconds and is cached for next time.</div>
+          ))}
+        </div>
+
+        <Section icon="📷" label="SHOOT FORMAT" color="#60a5fa">
+          <div style={{ fontSize:12, color:"#94a3b8", lineHeight:1.7, padding:"8px 10px",
+            background:"rgba(96,165,250,0.06)", borderRadius:5, border:"1px solid rgba(96,165,250,0.15)" }}>
+            {detail.shootFormat}
           </div>
-        )}
-        {error && (
-          <div style={{ textAlign:"center", padding:"20px 0" }}>
-            <div style={{ fontSize:11, color:"#ef4444", marginBottom:10 }}>{error}</div>
-            <button onClick={retry} style={{ padding:"7px 18px", background:"#f97316", border:"none",
-              borderRadius:5, color:"white", fontSize:11, cursor:"pointer", fontFamily:font, fontWeight:700 }}>
-              Retry
-            </button>
+        </Section>
+
+        <Section icon="💡" label="LIGHTING SETUP" color="#fbbf24">
+          <div style={{ fontSize:12, color:"#94a3b8", lineHeight:1.7, padding:"8px 10px",
+            background:"rgba(251,191,36,0.05)", borderRadius:5, border:"1px solid rgba(251,191,36,0.15)" }}>
+            {detail.lightingSetup}
           </div>
-        )}
-        {detail && (
-          <div>
-            {/* Row: Shoot time + Print time */}
-            <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap" }}>
-              {[["🎬 SHOOT TIME", detail.estimatedShootTime, "#60a5fa"],
-                ["🖨️ PRINT TIME", detail.estimatedPrintTime, "#a78bfa"]].map(([l,v,c]) => (
-                <div key={l} style={{ flex:1, minWidth:140, padding:"8px 12px", borderRadius:6,
-                  background:`${c}0d`, border:`1px solid ${c}33` }}>
-                  <div style={{ fontSize:8, fontFamily:mono, fontWeight:700, color:c, letterSpacing:"0.12em", marginBottom:3 }}>{l}</div>
-                  <div style={{ fontSize:12, color:"#d4dbe5", fontWeight:600 }}>{v}</div>
-                </div>
-              ))}
-            </div>
+        </Section>
 
-            {/* Shoot format */}
-            <Section icon="📷" label="SHOOT FORMAT" color="#60a5fa">
-              <div style={{ fontSize:12, color:"#94a3b8", lineHeight:1.7, padding:"8px 10px",
-                background:"rgba(96,165,250,0.06)", borderRadius:5, border:"1px solid rgba(96,165,250,0.15)" }}>
-                {detail.shootFormat}
-              </div>
-            </Section>
+        <Section icon="🎞️" label="SHOT LIST" color="#a78bfa">
+          <div style={{ background:"rgba(167,139,250,0.05)", borderRadius:5, border:"1px solid rgba(167,139,250,0.15)", padding:"8px 10px" }}>
+            {detail.shotList.map((s,i) => listItem(`${i+1}. ${s}`, "#c4b5fd", i))}
+          </div>
+        </Section>
 
-            {/* Lighting */}
-            <Section icon="💡" label="LIGHTING SETUP" color="#fbbf24">
-              <div style={{ fontSize:12, color:"#94a3b8", lineHeight:1.7, padding:"8px 10px",
-                background:"rgba(251,191,36,0.05)", borderRadius:5, border:"1px solid rgba(251,191,36,0.15)" }}>
-                {detail.lightingSetup}
-              </div>
-            </Section>
+        <Section icon="🎙️" label="VOICEOVER STYLE" color="#f472b6">
+          <div style={{ fontSize:12, color:"#f9a8d4", lineHeight:1.7, padding:"8px 10px",
+            background:"rgba(244,114,182,0.05)", borderRadius:5, border:"1px solid rgba(244,114,182,0.15)" }}>
+            {detail.voiceoverStyle}
+          </div>
+        </Section>
 
-            {/* Shot list */}
-            <Section icon="🎞️" label="SHOT LIST" color="#a78bfa">
-              <div style={{ background:"rgba(167,139,250,0.05)", borderRadius:5, border:"1px solid rgba(167,139,250,0.15)", padding:"8px 10px" }}>
-                {(detail.shotList||[]).map((s,i) => listItem(`${i+1}. ${s}`, "#c4b5fd"))}
-              </div>
-            </Section>
-
-            {/* Voiceover style */}
-            <Section icon="🎙️" label="VOICEOVER STYLE" color="#f472b6">
-              <div style={{ fontSize:12, color:"#f9a8d4", lineHeight:1.7, padding:"8px 10px",
-                background:"rgba(244,114,182,0.05)", borderRadius:5, border:"1px solid rgba(244,114,182,0.15)" }}>
-                {detail.voiceoverStyle}
-              </div>
-            </Section>
-
-            {/* Script */}
-            <Section icon="📝" label="VOICEOVER SCRIPT" color="#34d399">
-              <div style={{ background:"rgba(52,211,153,0.05)", border:"1px solid rgba(52,211,153,0.2)",
-                borderRadius:5, padding:"12px 14px" }}>
-                <div style={{ fontSize:12, color:"#a7f3d0", lineHeight:1.9, whiteSpace:"pre-wrap",
-                  fontStyle:"italic" }}>
-                  {detail.script}
-                </div>
-              </div>
-            </Section>
-
-            {/* Colours */}
-            <Section icon="🎨" label="COLOURS / FILAMENTS REQUIRED" color="#f97316">
-              <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
-                {(detail.coloursRequired||[]).map((c,i) => pill(c, "#f97316"))}
-              </div>
-            </Section>
-
-            {/* Equipment */}
-            <Section icon="🧰" label="EQUIPMENT REQUIRED" color="#60a5fa">
-              <div style={{ background:"rgba(96,165,250,0.05)", borderRadius:5, border:"1px solid rgba(96,165,250,0.15)", padding:"8px 10px" }}>
-                {(detail.equipmentRequired||[]).map((e,i) => listItem(e))}
-              </div>
-            </Section>
-
-            {/* Pro tips */}
-            <Section icon="⚡" label="PRO TIPS" color="#fbbf24">
-              <div style={{ background:"rgba(251,191,36,0.05)", borderRadius:5, border:"1px solid rgba(251,191,36,0.15)", padding:"8px 10px" }}>
-                {(detail.proTips||[]).map((t,i) => listItem(t, "#fde68a"))}
-              </div>
-            </Section>
-
-            {/* Regenerate */}
-            <div style={{ textAlign:"right", marginTop:4 }}>
-              <button onClick={retry} style={{ padding:"5px 12px", background:"transparent",
-                border:"1px solid #1a2030", borderRadius:4, color:"#334155", fontSize:10,
-                cursor:"pointer", fontFamily:font }}>
-                ↻ Regenerate brief
-              </button>
+        <Section icon="📝" label="VOICEOVER SCRIPT" color="#34d399">
+          <div style={{ background:"rgba(52,211,153,0.05)", border:"1px solid rgba(52,211,153,0.2)",
+            borderRadius:5, padding:"12px 14px" }}>
+            <div style={{ fontSize:12, color:"#a7f3d0", lineHeight:1.9, whiteSpace:"pre-wrap", fontStyle:"italic" }}>
+              {detail.script}
             </div>
           </div>
-        )}
+        </Section>
+
+        <Section icon="🎨" label="COLOURS / FILAMENTS REQUIRED" color="#f97316">
+          <div style={{ display:"flex", flexWrap:"wrap", gap:4 }}>
+            {detail.coloursRequired.map((c,i) => pill(c, "#f97316"))}
+          </div>
+        </Section>
+
+        <Section icon="🧰" label="EQUIPMENT REQUIRED" color="#60a5fa">
+          <div style={{ background:"rgba(96,165,250,0.05)", borderRadius:5, border:"1px solid rgba(96,165,250,0.15)", padding:"8px 10px" }}>
+            {detail.equipmentRequired.map((e,i) => listItem(e, "#94a3b8", i))}
+          </div>
+        </Section>
+
+        <Section icon="⚡" label="PRO TIPS" color="#fbbf24">
+          <div style={{ background:"rgba(251,191,36,0.05)", borderRadius:5, border:"1px solid rgba(251,191,36,0.15)", padding:"8px 10px" }}>
+            {detail.proTips.map((t,i) => listItem(t, "#fde68a", i))}
+          </div>
+        </Section>
+
       </div>
     </div>
   );
